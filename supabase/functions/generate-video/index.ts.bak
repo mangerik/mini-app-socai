@@ -1,0 +1,178 @@
+// Supabase Edge Function for proxying video generation to Socai API
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+interface VideoGenerationRequest {
+  image_url: string
+  prompt?: string
+  creator_id: string
+}
+
+serve(async (req) => {
+  // Handle CORS
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    // Check authentication
+    const authHeader = req.headers.get('authorization')
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: 'Missing authorization header' }),
+        { 
+          status: 401, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const supabase = createClient(supabaseUrl, supabaseKey)
+
+    // Verify user authentication
+    const token = authHeader.replace('Bearer ', '')
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+    
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid authentication' }),
+        { 
+          status: 401, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+
+    // Parse request body
+    const body: VideoGenerationRequest = await req.json()
+    const { image_url, prompt, creator_id } = body
+
+    if (!image_url || !creator_id) {
+      return new Response(
+        JSON.stringify({ error: 'Missing required fields: image_url, creator_id' }),
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+
+    // Verify creator_id matches authenticated user
+    if (creator_id !== user.id) {
+      return new Response(
+        JSON.stringify({ error: 'Creator ID mismatch' }),
+        { 
+          status: 403, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+
+    // Get Socai API credentials from environment
+    const socaiApiUrl = Deno.env.get('SOCAI_API_URL')
+    const socaiApiKey = Deno.env.get('SOCAI_API_KEY')
+
+    if (!socaiApiUrl || !socaiApiKey) {
+      console.error('Missing Socai API configuration')
+      return new Response(
+        JSON.stringify({ error: 'Service configuration error' }),
+        { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+
+    // Prepare request to Socai API
+    const socaiRequest = {
+      image_urls: [image_url],
+      prompt: prompt || 'Generate a creative AI video from this image',
+      creator_id: creator_id
+    }
+
+    console.log('Calling Socai API:', { ...socaiRequest, creator_id: '***' })
+
+    // Call Socai API
+    const socaiResponse = await fetch(socaiApiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${socaiApiKey}`,
+        'User-Agent': 'Socai-MiniApp/1.0'
+      },
+      body: JSON.stringify(socaiRequest)
+    })
+
+    if (!socaiResponse.ok) {
+      const errorText = await socaiResponse.text()
+      console.error('Socai API error:', socaiResponse.status, errorText)
+      
+      return new Response(
+        JSON.stringify({ 
+          error: 'Video generation failed', 
+          details: `API returned ${socaiResponse.status}` 
+        }),
+        { 
+          status: 502, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+
+    const socaiData = await socaiResponse.json()
+    
+    // Store generation record in database
+    const { error: dbError } = await supabase
+      .from('video_generations')
+      .insert({
+        user_id: user.id,
+        image_url: image_url,
+        video_url: socaiData.video_url || socaiData.result?.video_url,
+        prompt: prompt || 'Generate a creative AI video from this image',
+        status: 'completed',
+        tokens_used: 25,
+        socai_response: socaiData
+      })
+
+    if (dbError) {
+      console.error('Database error:', dbError)
+      // Don't fail the request, just log the error
+    }
+
+    // Return successful response
+    return new Response(
+      JSON.stringify({
+        success: true,
+        video_url: socaiData.video_url || socaiData.result?.video_url || socaiData.url,
+        video_id: socaiData.id || socaiData.video_id,
+        status: 'completed',
+        tokens_used: 25
+      }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      }
+    )
+
+  } catch (error) {
+    console.error('Edge function error:', error)
+    
+    return new Response(
+      JSON.stringify({ 
+        error: 'Internal server error', 
+        details: error.message 
+      }),
+      { 
+        status: 500, 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      }
+    )
+  }
+})
