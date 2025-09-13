@@ -12,6 +12,10 @@ export const metadata: Metadata = {
   title: "Socai Mini - AI Video Generator",
   description: "Generate AI videos from photos in minutes. Get 50 free tokens!",
   manifest: "/manifest.json",
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/icons/icon-192x192.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -19,6 +23,11 @@ export const metadata: Metadata = {
   },
   formatDetection: {
     telephone: false,
+  },
+  other: {
+    "mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-status-bar-style": "default",
   },
   openGraph: {
     type: "website",
@@ -48,13 +57,6 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="id">
-      <head>
-        <link rel="icon" href="/favicon.ico" sizes="any" />
-        <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
-        <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-      </head>
       <body className={`${inter.variable} font-sans antialiased`}>
         <PWAWrapper>
           {children}
